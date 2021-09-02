@@ -28,6 +28,7 @@ import (
 	"github.com/gravitational/teleport/lib/defaults"
 	"github.com/gravitational/teleport/lib/events"
 	"github.com/gravitational/teleport/lib/modules"
+	"github.com/gravitational/teleport/lib/services"
 	"github.com/gravitational/trace"
 
 	"github.com/sethvargo/go-diceware/diceware"
@@ -48,6 +49,8 @@ const (
 
 	approveRecoveryGenericErrMsg  = "unable to approve account recovery, please contact your system administrator"
 	approveRecoveryBadAuthnErrMsg = "invalid username, password, or second factor"
+
+	changeAuthnFromRecoveryGenericErrMsg = "unable to recover your account, please contact your system administrator"
 )
 
 // fakeRecoveryCodeHash is bcrypt hash for "fake-barbaz x 8".
@@ -368,6 +371,81 @@ func (s *Server) recordFailedRecoveryAttempt(ctx context.Context, rootErr error,
 		username, defaults.MaxAccountRecoveryAttempts, apiutils.HumanTimeFormat(lockUntil))
 
 	return &lockUntil, nil
+}
+
+// ChangeAuthnFromAccountRecovery implements AuthService.ChangeAuthnFromAccountRecovery.
+func (s *Server) ChangeAuthnFromAccountRecovery(ctx context.Context, req *proto.ChangeAuthnFromAccountRecoveryRequest) error {
+	if err := s.isAccountRecoveryAllowed(ctx); err != nil {
+		return trace.Wrap(err)
+	}
+
+	approvedToken, err := s.GetUserToken(ctx, req.GetRecoveryApprovedTokenID())
+	if err != nil {
+		log.Error(trace.DebugReport(err))
+		return trace.AccessDenied(changeAuthnFromRecoveryGenericErrMsg)
+	}
+
+	if err := s.verifyUserToken(approvedToken, UserTokenTypeRecoveryApproved); err != nil {
+		return trace.Wrap(err)
+	}
+
+	// Check that the correct auth credential is being recovered before setting a new one.
+	switch req.GetNewAuthnCred().(type) {
+	case *proto.ChangeAuthnFromAccountRecoveryRequest_NewPassword:
+		if approvedToken.GetUsage() == types.UserTokenUsage_USER_TOKEN_RECOVER_MFA {
+			log.Debugf("Failed to recover account, expected new mfa register response, but received a new password.")
+			return trace.AccessDenied(changeAuthnFromRecoveryGenericErrMsg)
+		}
+
+		if err := services.VerifyPassword(req.GetNewPassword()); err != nil {
+			return trace.Wrap(err)
+		}
+
+		if err := s.UpsertPassword(approvedToken.GetUser(), req.GetNewPassword()); err != nil {
+			log.Error(trace.DebugReport(err))
+			return trace.AccessDenied(changeAuthnFromRecoveryGenericErrMsg)
+		}
+
+	case *proto.ChangeAuthnFromAccountRecoveryRequest_NewMFAResponse:
+		if approvedToken.GetUsage() == types.UserTokenUsage_USER_TOKEN_RECOVER_PASSWORD {
+			log.Debugf("Failed to recover account, expected new password, but received a new mfa register response.")
+			return trace.AccessDenied(changeAuthnFromRecoveryGenericErrMsg)
+		}
+
+		err := s.verifyMFARespAndAddDeviceWithToken(ctx, req.GetNewMFAResponse(), approvedToken, req.GetNewDeviceName())
+		switch {
+		case trace.IsAlreadyExists(err):
+			// Return a shorter friendlier message.
+			return trace.AlreadyExists("MFA device with name %q already exists", req.GetNewDeviceName())
+		case err != nil:
+			return trace.Wrap(err)
+		}
+
+	default:
+		return trace.AccessDenied("unsupported authentication method")
+	}
+
+	// Check and remove user login lock so user can immediately sign in after finishing recovering.
+	user, err := s.GetUser(approvedToken.GetUser(), false)
+	if err != nil {
+		log.Error(trace.DebugReport(err))
+		return trace.AccessDenied(changeAuthnFromRecoveryGenericErrMsg)
+	}
+
+	if user.GetStatus().IsLocked {
+		user.ResetLocks()
+		if err := s.Identity.UpsertUser(user); err != nil {
+			log.Error(trace.DebugReport(err))
+			return trace.AccessDenied(changeAuthnFromRecoveryGenericErrMsg)
+		}
+
+		if err := s.DeleteUserLoginAttempts(approvedToken.GetUser()); err != nil {
+			log.Error(trace.DebugReport(err))
+			return trace.AccessDenied(changeAuthnFromRecoveryGenericErrMsg)
+		}
+	}
+
+	return nil
 }
 
 func (s *Server) generateAndUpsertRecoveryCodes(ctx context.Context, username string) ([]string, error) {
