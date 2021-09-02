@@ -3289,6 +3289,11 @@ func (a *ServerWithRoles) ApproveAccountRecovery(ctx context.Context, req *proto
 	return a.authServer.ApproveAccountRecovery(ctx, req)
 }
 
+// ChangeAuthnFromAccountRecovery is implemented by AuthService.ChangeAuthnFromAccountRecovery.
+func (a *ServerWithRoles) ChangeAuthnFromAccountRecovery(ctx context.Context, req *proto.ChangeAuthnFromAccountRecoveryRequest) error {
+	return a.authServer.ChangeAuthnFromAccountRecovery(ctx, req)
+}
+
 // NewAdminAuthServer returns auth server authorized as admin,
 // used for auth server cached access
 func NewAdminAuthServer(authServer *Server, sessions session.Service, alog events.IAuditLog) (ClientI, error) {

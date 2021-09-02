@@ -1945,3 +1945,11 @@ func (c *Client) ApproveAccountRecovery(ctx context.Context, req *proto.ApproveA
 	res, err := c.grpc.ApproveAccountRecovery(ctx, req, c.callOpts...)
 	return res, trail.FromGRPC(err)
 }
+
+// ChangeAuthnFromAccountRecovery sets a new password or adds a new mfa device,
+// allowing user to regain access to their account using the new credentials.
+// Represents step 3 of the account recovery process after RPC's StartAccountRecovery and ApproveAccountRecovery.
+func (c *Client) ChangeAuthnFromAccountRecovery(ctx context.Context, req *proto.ChangeAuthnFromAccountRecoveryRequest) error {
+	_, err := c.grpc.ChangeAuthnFromAccountRecovery(ctx, req, c.callOpts...)
+	return trail.FromGRPC(err)
+}

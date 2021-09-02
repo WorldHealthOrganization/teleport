@@ -3231,6 +3231,17 @@ func (g *GRPCServer) ApproveAccountRecovery(ctx context.Context, req *proto.Appr
 	return r, nil
 }
 
+// ChangeAuthnFromAccountRecovery is implemented by AuthService.ChangeAuthnFromAccountRecovery.
+func (g *GRPCServer) ChangeAuthnFromAccountRecovery(ctx context.Context, req *proto.ChangeAuthnFromAccountRecoveryRequest) (*empty.Empty, error) {
+	auth, err := g.authenticate(ctx)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	err = auth.ServerWithRoles.ChangeAuthnFromAccountRecovery(ctx, req)
+	return &empty.Empty{}, trace.Wrap(err)
+}
+
 // GRPCServerConfig specifies GRPC server configuration
 type GRPCServerConfig struct {
 	// APIConfig is GRPC server API configuration
